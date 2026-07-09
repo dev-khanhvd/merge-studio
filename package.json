@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "local-dev",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dev-khanhvd/merge-studio.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
