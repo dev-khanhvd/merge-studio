@@ -71,6 +71,16 @@
       {
         "command": "mergeStudio.showPanel",
         "title": "Merge Studio: Show Conflicted Files"
+      },
+      {
+        "command": "mergeStudio.compareWithRef",
+        "title": "Merge Studio: Compare Working Tree with Commit/Branch…",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "mergeStudio.clearCompare",
+        "title": "Merge Studio: Exit Compare Mode",
+        "icon": "$(close)"
       }
     ],
     "viewsContainers": {
@@ -101,13 +111,28 @@
           "command": "mergeStudio.markResolved",
           "when": "view == mergeStudio.conflictedFiles && viewItem == conflictFile",
           "group": "inline@2"
+        },
+        {
+          "command": "mergeStudio.openMergeEditor",
+          "when": "view == mergeStudio.conflictedFiles && viewItem == compareFile",
+          "group": "inline@1"
         }
       ],
       "view/title": [
         {
+          "command": "mergeStudio.compareWithRef",
+          "when": "view == mergeStudio.conflictedFiles",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mergeStudio.clearCompare",
+          "when": "view == mergeStudio.conflictedFiles && mergeStudio.compareActive",
+          "group": "navigation@2"
+        },
+        {
           "command": "mergeStudio.refresh",
           "when": "view == mergeStudio.conflictedFiles",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ],
       "commandPalette": [
@@ -117,6 +142,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "mergeStudio.conflictedFiles",
+        "contents": "Không có file conflict nào trong một cuộc merge thật.\n\nBạn vẫn có thể so sánh & merge 3-way giữa working tree hiện tại và một commit/branch bất kỳ.\n[So sánh với Commit/Branch…](command:mergeStudio.compareWithRef)"
+      }
+    ],
     "keybindings": [
       {
         "command": "mergeStudio.nextConflict",

@@ -5,7 +5,8 @@ import { ConflictTreeProvider, ConflictItem } from './conflictTreeProvider';
 import { StatusBarController } from './statusBarController';
 import { MergeEditorPanel } from './mergeEditorPanel';
 import { parseDocument, buildResultText } from './conflictParser';
-import { getConflictedFilePaths, getRepoRoot, gitAdd } from './gitHelper';
+import { getConflictedFilePaths, getRepoRoot, gitAdd, listRefs } from './gitHelper';
+import { buildCompareSession, clearCompareSession, getSessionRef } from './compareSession';
 
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -22,6 +23,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     treeView.badge = items.length > 0
       ? { value: items.length, tooltip: `${items.length} file(s) with conflicts` }
       : undefined;
+    void vscode.commands.executeCommand('setContext', 'mergeStudio.compareActive', getSessionRef() !== undefined);
     return items;
   };
 
@@ -96,6 +98,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.commands.registerCommand('mergeStudio.acceptAllCurrentWorkspace', () => acceptAllInWorkspace('local', refresh)),
     vscode.commands.registerCommand('mergeStudio.acceptAllIncomingWorkspace', () => acceptAllInWorkspace('incoming', refresh)),
+    vscode.commands.registerCommand('mergeStudio.compareWithRef', () => startCompare(refresh)),
+    vscode.commands.registerCommand('mergeStudio.clearCompare', async () => {
+      clearCompareSession();
+      await refresh();
+      vscode.window.showInformationMessage('Đã thoát chế độ Compare.');
+    }),
     vscode.commands.registerCommand('mergeStudio.nextConflict', () => MergeEditorPanel.getActive()?.navigate('next')),
     vscode.commands.registerCommand('mergeStudio.previousConflict', () => MergeEditorPanel.getActive()?.navigate('prev')),
     vscode.workspace.onDidSaveTextDocument(() => debouncedRefresh()),
@@ -125,6 +133,65 @@ function resolveUri(arg?: vscode.Uri | ConflictItem): vscode.Uri | undefined {
     return arg;
   }
   return arg.info.uri;
+}
+
+async function startCompare(refresh: () => Promise<unknown>): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const firstFolder = folders[0];
+  if (!firstFolder) {
+    vscode.window.showWarningMessage('Chưa mở workspace nào.');
+    return;
+  }
+  const root = await getRepoRoot(firstFolder.uri.fsPath);
+  if (!root) {
+    vscode.window.showErrorMessage('Thư mục hiện tại không phải git repo.');
+    return;
+  }
+
+  const refs = await listRefs(root);
+  const MANUAL = '$(edit) Nhập commit hash / ref…';
+  const picks: vscode.QuickPickItem[] = [
+    { label: MANUAL, description: 'Gõ trực tiếp commit hash, tag, hoặc tên branch' },
+    ...refs.map((r) => ({ label: r })),
+  ];
+  const chosen = await vscode.window.showQuickPick(picks, {
+    title: 'So sánh working tree với branch / commit nào?',
+    placeHolder: 'Chọn ref để merge 3-way (base = merge-base chung)',
+  });
+  if (!chosen) {
+    return;
+  }
+
+  let ref = chosen.label;
+  if (ref === MANUAL) {
+    const input = await vscode.window.showInputBox({
+      title: 'Nhập commit hash / ref',
+      placeHolder: 'vd: main, origin/dev, v1.2.0, hoặc 8fffe1c',
+      validateInput: (v) => (v.trim() ? undefined : 'Ref không được rỗng'),
+    });
+    if (!input) {
+      return;
+    }
+    ref = input.trim();
+  }
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Merge Studio: dựng 3-way vs ${ref}…` },
+    async () => {
+      const entries = await buildCompareSession(root, ref);
+      const conflicting = entries.filter((e) => e.conflictCount > 0).length;
+      if (entries.length === 0) {
+        vscode.window.showInformationMessage(`Không có file nào khác biệt giữa working tree và ${ref}.`);
+      } else if (conflicting === 0) {
+        vscode.window.showInformationMessage(
+          `${entries.length} file khác biệt vs ${ref} nhưng đều auto-merge sạch — không có conflict cần resolve.`,
+        );
+      }
+    },
+  );
+
+  await refresh();
+  await vscode.commands.executeCommand('mergeStudio.conflictedFiles.focus');
 }
 
 async function acceptAllInWorkspace(choice: 'local' | 'incoming', refresh: () => Promise<unknown>): Promise<void> {

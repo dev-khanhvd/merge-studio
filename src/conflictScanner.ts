@@ -2,11 +2,16 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import { getConflictedFilePaths } from './gitHelper';
 import { parseDocument } from './conflictParser';
+import { getActiveCompareEntries, getSessionRef } from './compareSession';
 
 export interface ConflictFileInfo {
   uri: vscode.Uri;
   relativePath: string;
   conflictCount: number;
+  /** 'merge' = real git conflict; 'compare' = generated diff-vs-ref session. */
+  source: 'merge' | 'compare';
+  /** The compared ref, when source === 'compare'. */
+  ref?: string;
 }
 
 /** Scans every workspace folder's git repo for unmerged files and counts conflict blocks in each. */
@@ -32,6 +37,7 @@ export async function scanWorkspaceConflicts(): Promise<ConflictFileInfo[]> {
           uri,
           relativePath: vscode.workspace.asRelativePath(uri, folders.length > 1),
           conflictCount: conflicts.length,
+          source: 'merge',
         });
       }
     } catch {
@@ -39,5 +45,28 @@ export async function scanWorkspaceConflicts(): Promise<ConflictFileInfo[]> {
     }
   }
 
-  return results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+  results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+
+  // Append entries from an active "compare vs ref" session. These are already
+  // rendered by the scanner's owner ordering-independently, so keep them after
+  // real conflicts.
+  const ref = getSessionRef();
+  const realConflictPaths = new Set(results.map((r) => r.uri.fsPath));
+  for (const entry of getActiveCompareEntries()) {
+    if (entry.conflictCount === 0) {
+      continue; // Clean auto-merge — nothing to resolve, so hide it.
+    }
+    if (realConflictPaths.has(entry.fsPath)) {
+      continue; // A real conflict on the same file takes precedence.
+    }
+    results.push({
+      uri: vscode.Uri.file(entry.fsPath),
+      relativePath: entry.relativePath,
+      conflictCount: entry.conflictCount,
+      source: 'compare',
+      ref,
+    });
+  }
+
+  return results;
 }

@@ -11,6 +11,7 @@ import {
   ParsedDocument,
 } from './conflictParser';
 import { gitAdd, getRepoRoot } from './gitHelper';
+import { getCompareText, updateCompareText, clearCompareEntry } from './compareSession';
 
 interface InboundMessage {
   type: 'ready' | 'reload' | 'directEdit' | 'save' | 'saveAndMarkResolved' | 'abort';
@@ -89,7 +90,9 @@ export class MergeEditorPanel {
   }
 
   private async load(): Promise<void> {
-    const content = await fs.readFile(this.fileUri.fsPath, 'utf8');
+    // In a "compare vs ref" session the conflict-marked text is generated in
+    // memory (the working file has no markers on disk yet), so prefer it.
+    const content = getCompareText(this.fileUri.fsPath) ?? await fs.readFile(this.fileUri.fsPath, 'utf8');
     this.doc = parseDocument(content);
     this.currentResultText = buildAutoMergedResultText(this.doc);
     this.remainingConflicts = countUnresolvedConflicts(this.doc);
@@ -167,6 +170,17 @@ export class MergeEditorPanel {
     const text = stillHasConflicts && conflictText !== undefined ? conflictText : this.currentResultText;
 
     await fs.writeFile(this.fileUri.fsPath, text, 'utf8');
+
+    // Keep any compare session in sync with what we just wrote. Once the file
+    // is fully resolved it leaves the session (and the panel); while conflicts
+    // remain the generated text is refreshed so reopening reflects the save.
+    if (getCompareText(this.fileUri.fsPath) !== undefined) {
+      if (stillHasConflicts) {
+        updateCompareText(this.fileUri.fsPath, text);
+      } else {
+        clearCompareEntry(this.fileUri.fsPath);
+      }
+    }
 
     // Reload from what we just wrote so in-memory state matches disk.
     this.doc = parseDocument(text);
