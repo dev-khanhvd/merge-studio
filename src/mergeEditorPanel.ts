@@ -16,6 +16,10 @@ interface InboundMessage {
   type: 'ready' | 'reload' | 'directEdit' | 'save' | 'saveAndMarkResolved' | 'abort';
   text?: string;
   remainingConflicts?: number;
+  /** Full file text with conflict markers re-inserted for unresolved hunks. */
+  conflictText?: string;
+  /** Whether the webview has unsaved edits (set on 'abort'). */
+  dirty?: boolean;
 }
 
 export class MergeEditorPanel {
@@ -99,6 +103,8 @@ export class MergeEditorPanel {
       localText: buildLocalText(this.doc),
       serverText: buildServerText(this.doc),
       resultText: this.currentResultText,
+      localLabel: this.doc.conflicts[0]?.localLabel,
+      incomingLabel: this.doc.conflicts[0]?.incomingLabel,
     });
   }
 
@@ -115,20 +121,34 @@ export class MergeEditorPanel {
         this.remainingConflicts = msg.remainingConflicts ?? this.remainingConflicts;
         break;
       case 'save':
-        await this.save(false);
+        await this.save(false, msg.conflictText);
         break;
       case 'saveAndMarkResolved':
-        await this.save(true);
+        await this.save(true, msg.conflictText);
         break;
       case 'abort':
-        this.panel.dispose();
+        await this.abort(msg.dirty ?? false);
         break;
     }
   }
 
-  private async save(markResolved: boolean): Promise<void> {
-    const text = this.currentResultText;
-    const stillHasConflicts = this.remainingConflicts > 0 || hasConflictMarkers(text);
+  private async abort(dirty: boolean): Promise<void> {
+    if (dirty) {
+      // Runs on the host because confirm() is unavailable in the webview sandbox.
+      const choice = await vscode.window.showWarningMessage(
+        'Có thay đổi chưa lưu. Đóng và bỏ qua các thay đổi này?',
+        { modal: true },
+        'Bỏ qua thay đổi',
+      );
+      if (choice !== 'Bỏ qua thay đổi') {
+        return;
+      }
+    }
+    this.panel.dispose();
+  }
+
+  private async save(markResolved: boolean, conflictText?: string): Promise<void> {
+    const stillHasConflicts = this.remainingConflicts > 0 || hasConflictMarkers(this.currentResultText);
 
     if (stillHasConflicts) {
       const choice = await vscode.window.showWarningMessage(
@@ -140,6 +160,11 @@ export class MergeEditorPanel {
         return;
       }
     }
+
+    // When conflicts remain, write the marker-preserving serialization so
+    // unresolved hunks keep both sides on disk instead of collapsing to an
+    // empty gap that would reload looking (falsely) resolved.
+    const text = stillHasConflicts && conflictText !== undefined ? conflictText : this.currentResultText;
 
     await fs.writeFile(this.fileUri.fsPath, text, 'utf8');
 

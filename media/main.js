@@ -8,6 +8,8 @@
   let localText = '';
   let serverText = '';
   let resultText = '';
+  let localLabel = 'HEAD';
+  let incomingLabel = 'incoming';
   let EOL = '\n';
   let layout = { groups: [], changeCount: 0, conflictCount: 0 };
   let focusedGroupIndex = -1;
@@ -144,15 +146,51 @@
   }
 
   function onApply() {
-    post({ type: 'saveAndMarkResolved' });
+    // Flush any pending debounced edit first, otherwise text typed within the
+    // last 250ms would be lost (the host would save the previous value).
+    flushPendingEdit();
+    post({ type: 'saveAndMarkResolved', conflictText: buildTextWithConflictMarkers() });
     dirty = false;
   }
 
   function onAbort() {
-    if (dirty && !confirm('Có thay đổi chưa lưu. Đóng và bỏ qua các thay đổi này?')) {
-      return;
+    // Flush so the host is in sync even if the user cancels the abort prompt.
+    flushPendingEdit();
+    // confirm() is blocked in the VS Code webview sandbox and always returns a
+    // falsy value, so the confirmation must happen on the extension host side.
+    post({ type: 'abort', dirty });
+  }
+
+  // Recombines the live textareas, rebuilds the layout, and pushes the latest
+  // result text to the host synchronously, cancelling any queued debounce.
+  function flushPendingEdit() {
+    if (editDebounce !== null) {
+      clearTimeout(editDebounce);
+      editDebounce = null;
     }
-    post({ type: 'abort' });
+    resultText = recombineResultText();
+    layout = window.MergeStudioLayout.buildLayout(localText, resultText, serverText);
+    post({ type: 'directEdit', text: resultText, remainingConflicts: layout.conflictCount });
+  }
+
+  // Serializes the current result, re-inserting real Git conflict markers for
+  // every still-unresolved hunk. Used when the user chooses to save a file that
+  // still has conflicts, so unresolved hunks keep both sides instead of being
+  // silently written out as an empty (resolved-looking) gap.
+  function buildTextWithConflictMarkers() {
+    const out = [];
+    for (const g of layout.groups) {
+      if (g.kind === 'conflict-unresolved') {
+        out.push('<<<<<<< ' + localLabel);
+        for (const l of g.local.lines) out.push(l);
+        out.push('=======');
+        for (const l of g.server.lines) out.push(l);
+        out.push('>>>>>>> ' + incomingLabel);
+      } else {
+        for (const l of g.result.lines) out.push(l);
+      }
+    }
+    return out.join(EOL);
   }
 
   function getChangeIndices() {
@@ -530,6 +568,8 @@
       localText = msg.localText;
       serverText = msg.serverText;
       resultText = msg.resultText;
+      localLabel = msg.localLabel || 'HEAD';
+      incomingLabel = msg.incomingLabel || 'incoming';
       EOL = (localText.includes('\r\n') || serverText.includes('\r\n') || resultText.includes('\r\n')) ? '\r\n' : '\n';
       focusedGroupIndex = -1;
       expandedGroups.clear();
