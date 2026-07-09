@@ -137,6 +137,61 @@ export function buildResultText(doc: ParsedDocument, resolutions: Map<number, st
   return parts.join(doc.eol);
 }
 
+/**
+ * Joins block texts with `eol`, but drops conflict blocks whose resolved
+ * text is empty entirely (rather than inserting an eol for them) so a hunk
+ * that legitimately contributes zero lines doesn't leave a spurious blank
+ * line behind. Context blocks are always kept, even when '' (a real blank
+ * line in the source file).
+ */
+function joinDroppingEmptyConflicts(doc: ParsedDocument, resolve: (c: ConflictBlock) => string): string {
+  const parts: string[] = [];
+  for (const block of doc.blocks) {
+    if (block.type === 'context') {
+      parts.push(block.text);
+      continue;
+    }
+    const text = resolve(block.conflict);
+    if (text !== '') {
+      parts.push(text);
+    }
+  }
+  return parts.join(doc.eol);
+}
+
+export function buildLocalText(doc: ParsedDocument): string {
+  return joinDroppingEmptyConflicts(doc, (c) => c.local);
+}
+
+export function buildServerText(doc: ParsedDocument): string {
+  return joinDroppingEmptyConflicts(doc, (c) => c.incoming);
+}
+
+/**
+ * Initial "Result" text: context is copied as-is, and each conflict is
+ * auto-merged only when the diff3 base shows just one side actually changed
+ * (base === the other side). Genuine two-sided conflicts are left blank so
+ * the webview renders them as an unresolved gap the user must fill in.
+ */
+export function buildAutoMergedResultText(doc: ParsedDocument): string {
+  return joinDroppingEmptyConflicts(doc, (c) => {
+    if (c.base !== undefined) {
+      if (c.base === c.local) {
+        return c.incoming;
+      }
+      if (c.base === c.incoming) {
+        return c.local;
+      }
+    }
+    return '';
+  });
+}
+
+/** Conflicts that buildAutoMergedResultText couldn't auto-merge (genuine two-sided conflicts). */
+export function countUnresolvedConflicts(doc: ParsedDocument): number {
+  return doc.conflicts.filter((c) => !(c.base !== undefined && (c.base === c.local || c.base === c.incoming))).length;
+}
+
 function rawConflictText(c: ConflictBlock, eol: string): string {
   const lines = [`<<<<<<< ${c.localLabel}`, c.local];
   if (c.base !== undefined) {

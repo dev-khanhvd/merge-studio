@@ -1,13 +1,27 @@
 (function () {
   const vscode = acquireVsCodeApi();
+  const ROW_H = 19; // keep in sync with --ms-row-h in main.css
+  const COLLAPSE_THRESHOLD = 8;
+  const EDGE_LINES = 3;
 
-  /** @type {{blocks: any[], total: number, fileName: string}} */
-  let state = { blocks: [], total: 0, fileName: '' };
-  let resolvedIndexes = new Set();
+  let fileName = '';
+  let localText = '';
+  let serverText = '';
   let resultText = '';
-  let manualEditIndex = null;
-  let currentNavIndex = -1;
-  let resultCollapsed = true;
+  let EOL = '\n';
+  let layout = { groups: [], changeCount: 0, conflictCount: 0 };
+  let focusedGroupIndex = -1;
+  let wordHighlight = true;
+  let collapseUnchanged = true;
+  let dirty = false;
+  const expandedGroups = new Set();
+
+  // Populated fresh on every render(); entries are either
+  // { el: <textarea> } for a live-editable group, or
+  // { staticText } for a collapsed equal-group with no live editor.
+  let resultTextareas = [];
+  let pendingCursor = null;
+  let editDebounce = null;
 
   const app = document.getElementById('app');
 
@@ -17,10 +31,12 @@
       for (const [key, value] of Object.entries(attrs)) {
         if (key === 'className') {
           node.className = value;
+        } else if (key === 'title') {
+          node.title = value;
         } else if (key.startsWith('on') && typeof value === 'function') {
           node.addEventListener(key.slice(2).toLowerCase(), value);
-        } else if (value !== undefined && value !== null) {
-          node.setAttribute(key, value);
+        } else if (value !== undefined && value !== null && value !== false) {
+          node.setAttribute(key, value === true ? '' : value);
         }
       }
     }
@@ -31,295 +47,495 @@
     return node;
   }
 
-  function pre(text, className) {
-    const p = el('pre', className ? { className } : null, []);
-    p.textContent = text ?? '';
-    return p;
-  }
-
-  function render() {
-    app.innerHTML = '';
-    app.appendChild(renderToolbar());
-
-    const content = el('div', { className: 'content', id: 'content' }, []);
-    if (state.blocks.length === 0) {
-      content.appendChild(el('div', { className: 'empty-state' }, ['Đang tải…']));
-    } else {
-      for (const block of state.blocks) {
-        if (block.type === 'context') {
-          content.appendChild(renderContextBlock(block.text));
-        } else {
-          content.appendChild(renderConflictCard(block.conflict));
-        }
-      }
-    }
-    app.appendChild(content);
-    app.appendChild(renderResultPanel());
-  }
-
-  function renderToolbar() {
-    const resolvedCount = resolvedIndexes.size;
-    const total = state.total;
-    return el('div', { className: 'toolbar' }, [
-      el('span', { className: 'file-name' }, [`\u{1F500} ${state.fileName || ''}`]),
-      el('span', { className: 'progress' }, [`${resolvedCount}/${total} resolved`]),
-      el('span', { className: 'spacer' }, []),
-      el('button', { onClick: () => go(-1) }, ['↑ Prev']),
-      el('button', { onClick: () => go(1) }, ['Next ↓']),
-      el('button', { onClick: () => acceptAll('local') }, ['Accept All Current']),
-      el('button', { onClick: () => acceptAll('incoming') }, ['Accept All Incoming']),
-      el('button', { className: 'primary', onClick: () => post({ type: 'save' }) }, ['Save']),
-      el(
-        'button',
-        { className: 'primary', onClick: () => post({ type: 'saveAndMarkResolved' }) },
-        ['Save && Mark Resolved'],
-      ),
-    ]);
-  }
-
-  function renderContextBlock(text) {
-    const lines = text.split(/\r\n|\n/);
-    if (lines.length > 8) {
-      const head = lines.slice(0, 3).join('\n');
-      const tail = lines.slice(-3).join('\n');
-      const wrap = el('div', null, []);
-      wrap.appendChild(pre(head, 'context'));
-      const collapsedNote = el('div', { className: 'context-collapsed' }, [`⋮ ${lines.length - 6} dòng không đổi ⋮`]);
-      wrap.appendChild(collapsedNote);
-      wrap.appendChild(pre(tail, 'context'));
-      let expanded = false;
-      collapsedNote.addEventListener('click', () => {
-        if (expanded) return;
-        expanded = true;
-        const full = pre(text, 'context');
-        wrap.replaceChildren(full);
-      });
-      return wrap;
-    }
-    return pre(text, 'context');
-  }
-
-  function renderConflictCard(conflict) {
-    const isResolved = resolvedIndexes.has(conflict.index);
-    const card = el('div', {
-      className: `conflict-card${isResolved ? ' resolved' : ''}`,
-      id: `conflict-${conflict.index}`,
-    }, []);
-
-    card.appendChild(
-      el('div', { className: 'conflict-header' }, [
-        el('span', { className: 'badge' }, [`Conflict #${conflict.index + 1} / ${state.total}`]),
-        el('span', { className: 'status' }, [isResolved ? 'Resolved' : 'Unresolved']),
-      ]),
-    );
-
-    const actions = el('div', { className: 'conflict-actions' }, [
-      el('button', { onClick: () => resolve(conflict.index, 'local') }, ['Accept Current']),
-      conflict.base !== undefined
-        ? el('button', { onClick: () => resolve(conflict.index, 'base') }, ['Accept Base'])
-        : null,
-      el('button', { onClick: () => resolve(conflict.index, 'incoming') }, ['Accept Incoming']),
-      el('button', { onClick: () => resolve(conflict.index, 'both') }, ['Accept Both']),
-      el('button', { onClick: () => toggleManualEdit(conflict.index) }, ['Edit Manually']),
-      isResolved
-        ? el('button', { onClick: () => unresolve(conflict.index) }, ['Revert'])
-        : null,
-    ]);
-    card.appendChild(actions);
-
-    if (manualEditIndex === conflict.index) {
-      card.appendChild(renderManualEdit(conflict));
-    } else {
-      const columns = el('div', {
-        className: `conflict-columns${conflict.base !== undefined ? ' with-base' : ''}`,
-      }, []);
-      columns.appendChild(renderColumn('local', 'Current (Local)', conflict.localLabel, conflict.local));
-      if (conflict.base !== undefined) {
-        columns.appendChild(renderColumn('base', 'Base (Ancestor)', conflict.baseLabel, conflict.base));
-      }
-      columns.appendChild(renderColumn('incoming', 'Incoming (Remote)', conflict.incomingLabel, conflict.incoming));
-      card.appendChild(columns);
-
-      if (isResolved) {
-        const resolvedText = getResolvedTextFor(conflict.index);
-        card.appendChild(
-          el('div', { className: 'resolved-preview' }, [
-            el('div', { className: 'col-label' }, ['Kết quả đã chọn']),
-            pre(resolvedText, undefined),
-          ]),
-        );
-      }
-    }
-
-    return card;
-  }
-
-  function renderColumn(kind, title, label, text) {
-    const isEmpty = !text;
-    return el('div', { className: `conflict-column ${kind}${isEmpty ? ' empty' : ''}` }, [
-      el('div', { className: 'col-label' }, [`${title}${label ? ` — ${label}` : ''}`]),
-      pre(isEmpty ? '(trống)' : text, undefined),
-    ]);
-  }
-
-  function renderManualEdit(conflict) {
-    const initial = resolvedIndexes.has(conflict.index)
-      ? getResolvedTextFor(conflict.index)
-      : [conflict.local, conflict.incoming].filter(Boolean).join('\n');
-    const wrap = el('div', { className: 'manual-edit' }, []);
-    const textarea = document.createElement('textarea');
-    textarea.value = initial;
-    wrap.appendChild(textarea);
-    wrap.appendChild(
-      el('div', { className: 'manual-edit-actions' }, [
-        el('button', {
-          className: 'primary',
-          onClick: () => {
-            resolve(conflict.index, 'custom', textarea.value);
-            manualEditIndex = null;
-          },
-        }, ['Apply']),
-        el('button', { onClick: () => { manualEditIndex = null; render(); } }, ['Cancel']),
-      ]),
-    );
-    return wrap;
-  }
-
-  // Client-side cache of the text each conflict was resolved to, so the
-  // "resolved preview" / manual-edit box can render without waiting on a
-  // round trip. The extension host recomputes the authoritative text on save.
-  const resolvedTextByIndex = new Map();
-
-  function getResolvedTextFor(index) {
-    return resolvedTextByIndex.get(index) ?? '';
-  }
-
-  function findConflict(index) {
-    for (const block of state.blocks) {
-      if (block.type === 'conflict' && block.conflict.index === index) {
-        return block.conflict;
-      }
-    }
-    return null;
-  }
-
-  function computeChoiceText(conflict, choice, customText) {
-    switch (choice) {
-      case 'local':
-        return conflict.local;
-      case 'base':
-        return conflict.base ?? '';
-      case 'incoming':
-        return conflict.incoming;
-      case 'both':
-        return [conflict.local, conflict.incoming].filter(Boolean).join('\n');
-      case 'custom':
-        return customText ?? '';
-      default:
-        return '';
-    }
-  }
-
-  function renderResultPanel() {
-    const panel = el('div', { className: `result-panel${resultCollapsed ? ' collapsed' : ''}` }, []);
-    const header = el('div', { className: 'result-panel-header' }, [
-      el('span', { className: 'chev' }, ['▼']),
-      el('span', null, ['Final Result Preview (có thể sửa trực tiếp)']),
-    ]);
-    header.addEventListener('click', () => {
-      resultCollapsed = !resultCollapsed;
-      render();
-      focusResultTextareaIfOpen();
-    });
-    panel.appendChild(header);
-
-    const textarea = document.createElement('textarea');
-    textarea.id = 'result-textarea';
-    textarea.value = resultText;
-    textarea.spellcheck = false;
-    let debounceTimer;
-    textarea.addEventListener('input', () => {
-      clearTimeout(debounceTimer);
-      const value = textarea.value;
-      debounceTimer = setTimeout(() => post({ type: 'directEdit', text: value }), 250);
-    });
-    panel.appendChild(textarea);
-    return panel;
-  }
-
-  function focusResultTextareaIfOpen() {
-    if (!resultCollapsed) {
-      const ta = document.getElementById('result-textarea');
-      if (ta) ta.focus();
-    }
-  }
-
-  function resolve(index, choice, text) {
-    const conflict = findConflict(index);
-    if (conflict) {
-      resolvedTextByIndex.set(index, computeChoiceText(conflict, choice, text));
-    }
-    post({ type: 'resolve', index, choice, text });
-  }
-
-  function acceptAll(choice) {
-    for (const block of state.blocks) {
-      if (block.type === 'conflict') {
-        resolvedTextByIndex.set(block.conflict.index, computeChoiceText(block.conflict, choice));
-      }
-    }
-    post({ type: choice === 'local' ? 'acceptAllLocal' : 'acceptAllIncoming' });
-  }
-
-  function unresolve(index) {
-    resolvedTextByIndex.delete(index);
-    post({ type: 'unresolve', index });
-  }
-
-  function toggleManualEdit(index) {
-    manualEditIndex = manualEditIndex === index ? null : index;
-    render();
-  }
-
-  function go(delta) {
-    const conflicts = state.blocks.filter((b) => b.type === 'conflict').map((b) => b.conflict);
-    if (conflicts.length === 0) return;
-    currentNavIndex = ((currentNavIndex + delta) % conflicts.length + conflicts.length) % conflicts.length;
-    const target = document.getElementById(`conflict-${conflicts[currentNavIndex].index}`);
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.style.outline = '2px solid var(--vscode-focusBorder)';
-      setTimeout(() => { target.style.outline = ''; }, 900);
-    }
+  function rowDiv(text, extraClass) {
+    const d = document.createElement('div');
+    d.className = extraClass ? 'row ' + extraClass : 'row';
+    if (text) d.textContent = text;
+    return d;
   }
 
   function post(message) {
     vscode.postMessage(message);
   }
 
+  // ---------- render ----------
+
+  function render() {
+    app.innerHTML = '';
+    resultTextareas = [];
+    app.appendChild(renderToolbar());
+    app.appendChild(renderMergeGrid());
+    app.appendChild(renderBottomBar());
+    restoreCursorIfPending();
+  }
+
+  function renderToolbar() {
+    const bar = el('div', { className: 'toolbar' }, [
+      el('span', { className: 'file-name' }, [fileName || '']),
+      el('button', { onClick: () => go(-1), title: 'Xung đột trước' }, ['↑ Trước']),
+      el('button', { onClick: () => go(1), title: 'Xung đột tiếp theo' }, ['Tiếp theo ↓']),
+      buildHighlightSelect(),
+      el('button', {
+        className: 'icon-btn' + (collapseUnchanged ? ' toggled' : ''),
+        title: 'Thu gọn phần không đổi',
+        onClick: () => {
+          collapseUnchanged = !collapseUnchanged;
+          render();
+        },
+      }, ['≡']),
+      el('button', {
+        className: 'icon-btn',
+        title: 'Tải lại từ đĩa',
+        onClick: () => post({ type: 'reload' }),
+      }, ['↻']),
+      el('button', {
+        className: 'accept-local',
+        title: 'Accept All Local',
+        onClick: () => acceptAll('local'),
+      }, ['✔ Local']),
+      el('button', {
+        className: 'accept-server',
+        title: 'Accept All Incoming',
+        onClick: () => acceptAll('server'),
+      }, ['✔ Server']),
+      el('span', { className: 'spacer' }, []),
+      el('span', { className: 'counter' }, [
+        `${layout.changeCount} thay đổi. ${layout.conflictCount} xung đột.`,
+      ]),
+    ]);
+    return bar;
+  }
+
+  function buildHighlightSelect() {
+    const select = document.createElement('select');
+    const opt1 = document.createElement('option');
+    opt1.value = 'words';
+    opt1.textContent = 'Highlight words';
+    const opt2 = document.createElement('option');
+    opt2.value = 'lines';
+    opt2.textContent = 'Highlight lines';
+    select.appendChild(opt1);
+    select.appendChild(opt2);
+    select.value = wordHighlight ? 'words' : 'lines';
+    select.addEventListener('change', () => {
+      wordHighlight = select.value === 'words';
+      render();
+    });
+    return select;
+  }
+
+  function renderBottomBar() {
+    const group = focusedGroupIndex >= 0 ? layout.groups[focusedGroupIndex] : null;
+    const canLeft = !!group && group.kind !== 'equal' && group.kind !== 'diff-server-only';
+    const canRight = !!group && group.kind !== 'equal' && group.kind !== 'diff-local-only';
+    return el('div', { className: 'bottom-bar' }, [
+      el('button', {
+        onClick: () => focusedGroupIndex >= 0 && takeSide(focusedGroupIndex, 'local'),
+        disabled: !canLeft,
+      }, ['Accept Left']),
+      el('button', {
+        onClick: () => focusedGroupIndex >= 0 && takeSide(focusedGroupIndex, 'server'),
+        disabled: !canRight,
+      }, ['Accept Right']),
+      el('span', { className: 'spacer' }, []),
+      el('button', { className: 'danger', onClick: onAbort }, ['Abort']),
+      el('button', { className: 'primary', onClick: onApply }, ['Apply']),
+    ]);
+  }
+
+  function onApply() {
+    post({ type: 'saveAndMarkResolved' });
+    dirty = false;
+  }
+
+  function onAbort() {
+    if (dirty && !confirm('Có thay đổi chưa lưu. Đóng và bỏ qua các thay đổi này?')) {
+      return;
+    }
+    post({ type: 'abort' });
+  }
+
+  function getChangeIndices() {
+    const out = [];
+    layout.groups.forEach((g, i) => {
+      if (g.kind !== 'equal') out.push(i);
+    });
+    return out;
+  }
+
+  // ---------- 3-pane grid ----------
+
+  function renderMergeGrid() {
+    const scroll = el('div', { className: 'merge-scroll' }, []);
+
+    if (layout.groups.length === 0) {
+      scroll.appendChild(el('div', { className: 'empty-state' }, ['Không có nội dung.']));
+      return scroll;
+    }
+
+    const localCol = el('div', { className: 'pane-col text' }, []);
+    const localNum = el('div', { className: 'pane-col linenum' }, []);
+    const gutterLeft = el('div', { className: 'pane-col gutter gutter-left' }, []);
+    const resultNumL = el('div', { className: 'pane-col linenum' }, []);
+    const resultCol = el('div', { className: 'pane-col text' }, []);
+    const resultNumR = el('div', { className: 'pane-col linenum' }, []);
+    const gutterRight = el('div', { className: 'pane-col gutter gutter-right' }, []);
+    const serverNum = el('div', { className: 'pane-col linenum' }, []);
+    const serverCol = el('div', { className: 'pane-col text' }, []);
+
+    let localLineNo = 1;
+    let resultLineNo = 1;
+    let serverLineNo = 1;
+
+    layout.groups.forEach((group, groupIndex) => {
+      const collapsible = collapseUnchanged
+        && group.kind === 'equal'
+        && group.height > COLLAPSE_THRESHOLD
+        && !expandedGroups.has(groupIndex);
+
+      if (collapsible) {
+        renderCollapsedGroup(group, groupIndex, {
+          localCol, localNum, gutterLeft, resultNumL, resultCol, resultNumR, gutterRight, serverNum, serverCol,
+        }, localLineNo, resultLineNo, serverLineNo);
+      } else {
+        renderFullGroup(group, groupIndex, {
+          localCol, localNum, gutterLeft, resultNumL, resultCol, resultNumR, gutterRight, serverNum, serverCol,
+        }, localLineNo, resultLineNo, serverLineNo);
+      }
+
+      localLineNo += group.local.lines.length;
+      resultLineNo += group.result.lines.length;
+      serverLineNo += group.server.lines.length;
+    });
+
+    scroll.appendChild(localCol);
+    scroll.appendChild(localNum);
+    scroll.appendChild(gutterLeft);
+    scroll.appendChild(resultNumL);
+    scroll.appendChild(resultCol);
+    scroll.appendChild(resultNumR);
+    scroll.appendChild(gutterRight);
+    scroll.appendChild(serverNum);
+    scroll.appendChild(serverCol);
+    return scroll;
+  }
+
+  function renderFullGroup(group, groupIndex, cols, localLineNo, resultLineNo, serverLineNo) {
+    const focused = groupIndex === focusedGroupIndex;
+    const blockClass = 'group-block kind-' + group.kind + (focused ? ' focused' : '');
+
+    appendTextBlock(cols.localCol, group.local.lines, group.height, blockClass, groupIndex, {
+      counterpart: group.kind !== 'equal' ? group.result.lines : null,
+    });
+    appendLineNumBlock(cols.localNum, localLineNo, group.local.lines.length, group.height, blockClass, groupIndex);
+
+    appendResultBlock(cols.resultCol, group, groupIndex, blockClass);
+    appendLineNumBlock(cols.resultNumL, resultLineNo, group.result.lines.length, group.height, blockClass, groupIndex);
+    appendLineNumBlock(cols.resultNumR, resultLineNo, group.result.lines.length, group.height, blockClass, groupIndex);
+
+    appendTextBlock(cols.serverCol, group.server.lines, group.height, blockClass, groupIndex, {
+      counterpart: group.kind !== 'equal' ? group.result.lines : null,
+    });
+    appendLineNumBlock(cols.serverNum, serverLineNo, group.server.lines.length, group.height, blockClass, groupIndex);
+
+    cols.gutterLeft.appendChild(buildGutterBand('left', group, groupIndex, blockClass));
+    cols.gutterRight.appendChild(buildGutterBand('right', group, groupIndex, blockClass));
+  }
+
+  function renderCollapsedGroup(group, groupIndex, cols, localLineNo, resultLineNo, serverLineNo) {
+    const total = group.height;
+    const hidden = total - EDGE_LINES * 2;
+    const blockClass = 'group-block kind-equal';
+
+    appendStaticEdges(cols.localCol, group.local.lines, hidden, blockClass, groupIndex);
+    appendLineNumEdges(cols.localNum, localLineNo, total, hidden, blockClass, groupIndex);
+
+    const wrap = el('div', { className: blockClass }, []);
+    wrap.dataset.groupIndex = String(groupIndex);
+    appendStaticEdgesInto(wrap, group.result.lines, hidden, groupIndex);
+    cols.resultCol.appendChild(wrap);
+    resultTextareas[groupIndex] = { staticText: group.result.lines.join(EOL) };
+
+    appendLineNumEdges(cols.resultNumL, resultLineNo, total, hidden, blockClass, groupIndex);
+    appendLineNumEdges(cols.resultNumR, resultLineNo, total, hidden, blockClass, groupIndex);
+
+    appendStaticEdges(cols.serverCol, group.server.lines, hidden, blockClass, groupIndex);
+    appendLineNumEdges(cols.serverNum, serverLineNo, total, hidden, blockClass, groupIndex);
+
+    const leftGutter = el('div', { className: blockClass }, [spacerDiv((EDGE_LINES * 2 + 1) * ROW_H)]);
+    leftGutter.dataset.groupIndex = String(groupIndex);
+    cols.gutterLeft.appendChild(leftGutter);
+    const rightGutter = el('div', { className: blockClass }, [spacerDiv((EDGE_LINES * 2 + 1) * ROW_H)]);
+    rightGutter.dataset.groupIndex = String(groupIndex);
+    cols.gutterRight.appendChild(rightGutter);
+  }
+
+  function spacerDiv(height) {
+    const d = document.createElement('div');
+    d.style.height = height + 'px';
+    return d;
+  }
+
+  function appendStaticEdges(col, lines, hidden, blockClass, groupIndex) {
+    const wrap = el('div', { className: blockClass }, []);
+    wrap.dataset.groupIndex = String(groupIndex);
+    appendStaticEdgesInto(wrap, lines, hidden, groupIndex);
+    col.appendChild(wrap);
+  }
+
+  function appendStaticEdgesInto(wrap, lines, hidden, groupIndex) {
+    const head = lines.slice(0, EDGE_LINES);
+    const tail = lines.slice(lines.length - EDGE_LINES);
+    for (const line of head) wrap.appendChild(rowDiv(line));
+    const divider = el('div', { className: 'collapse-divider' }, [`⋮ ${hidden} dòng không đổi ⋮`]);
+    divider.addEventListener('click', () => {
+      expandedGroups.add(groupIndex);
+      render();
+    });
+    wrap.appendChild(divider);
+    for (const line of tail) wrap.appendChild(rowDiv(line));
+  }
+
+  function appendLineNumEdges(col, startLine, total, hidden, blockClass, groupIndex) {
+    const wrap = el('div', { className: blockClass }, []);
+    wrap.dataset.groupIndex = String(groupIndex);
+    for (let i = 0; i < EDGE_LINES; i++) wrap.appendChild(rowDiv(String(startLine + i)));
+    wrap.appendChild(el('div', { className: 'collapse-divider' }, [`⋮ ${hidden} ⋮`]));
+    for (let i = total - EDGE_LINES; i < total; i++) wrap.appendChild(rowDiv(String(startLine + i)));
+    col.appendChild(wrap);
+  }
+
+  function appendTextBlock(col, lines, height, blockClass, groupIndex, wordOpts) {
+    const wrap = el('div', { className: blockClass }, []);
+    wrap.dataset.groupIndex = String(groupIndex);
+    for (let i = 0; i < height; i++) {
+      if (i < lines.length) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        if (wordHighlight && wordOpts && wordOpts.counterpart && wordOpts.counterpart.length === lines.length) {
+          appendWordDiff(row, wordOpts.counterpart[i], lines[i], 'new');
+        } else {
+          row.textContent = lines[i];
+        }
+        wrap.appendChild(row);
+      } else {
+        wrap.appendChild(rowDiv('', 'filler'));
+      }
+    }
+    col.appendChild(wrap);
+  }
+
+  function appendWordDiff(row, otherLine, ownLine, side) {
+    const chunks = window.MergeStudioDiff.diffWords(otherLine, ownLine);
+    for (const c of chunks) {
+      if (c.type === 'equal') {
+        row.appendChild(document.createTextNode(c.tokens.join('')));
+      } else if (side === 'new' && c.type === 'add') {
+        const span = document.createElement('span');
+        span.className = 'tok-changed';
+        span.textContent = c.tokens.join('');
+        row.appendChild(span);
+      }
+    }
+  }
+
+  function appendLineNumBlock(col, startLine, realCount, height, blockClass, groupIndex) {
+    const wrap = el('div', { className: blockClass }, []);
+    wrap.dataset.groupIndex = String(groupIndex);
+    for (let i = 0; i < height; i++) {
+      wrap.appendChild(i < realCount ? rowDiv(String(startLine + i)) : rowDiv('', 'filler'));
+    }
+    col.appendChild(wrap);
+  }
+
+  function appendResultBlock(col, group, groupIndex, blockClass) {
+    const wrap = el('div', { className: blockClass + ' result-cell-wrap' }, []);
+    wrap.dataset.groupIndex = String(groupIndex);
+    wrap.style.minHeight = (group.height * ROW_H) + 'px';
+    const textarea = document.createElement('textarea');
+    textarea.className = 'ms-result-ta';
+    textarea.spellcheck = false;
+    textarea.value = group.result.lines.join(EOL);
+    textarea.rows = Math.max(1, group.result.lines.length);
+    textarea.addEventListener('focus', () => {
+      if (focusedGroupIndex !== groupIndex) {
+        focusedGroupIndex = groupIndex;
+        updateFocusOutline();
+      }
+    });
+    textarea.addEventListener('input', () => onResultInput(textarea));
+    wrap.appendChild(textarea);
+    col.appendChild(wrap);
+    resultTextareas[groupIndex] = { el: textarea };
+    autoGrow(textarea);
+  }
+
+  function updateFocusOutline() {
+    document.querySelectorAll('.group-block.focused').forEach((n) => n.classList.remove('focused'));
+    document.querySelectorAll(`[data-group-index="${focusedGroupIndex}"]`).forEach((n) => n.classList.add('focused'));
+  }
+
+  function autoGrow(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }
+
+  function gutterActionsFor(kind) {
+    return {
+      showTakeLocal: kind === 'conflict-unresolved' || kind === 'diff-local-only' || kind === 'diff-both-resolved',
+      showTakeServer: kind === 'conflict-unresolved' || kind === 'diff-server-only' || kind === 'diff-both-resolved',
+    };
+  }
+
+  function buildGutterBand(side, group, groupIndex, blockClass) {
+    const band = el('div', { className: blockClass }, []);
+    band.style.height = (group.height * ROW_H) + 'px';
+    band.dataset.groupIndex = String(groupIndex);
+    if (group.kind === 'equal') return band;
+
+    const actions = gutterActionsFor(group.kind);
+    if (side === 'left' && actions.showTakeLocal) {
+      const btn = el('div', {
+        className: 'gutter-action action-take',
+        title: 'Lấy Local vào Result',
+        onClick: () => takeSide(groupIndex, 'local'),
+      }, ['»']);
+      band.appendChild(btn);
+    }
+    if (side === 'right' && actions.showTakeServer) {
+      const btn = el('div', {
+        className: 'gutter-action action-take',
+        title: 'Lấy Server vào Result',
+        onClick: () => takeSide(groupIndex, 'server'),
+      }, ['«']);
+      band.appendChild(btn);
+    }
+    return band;
+  }
+
+  // ---------- editing / state sync ----------
+
+  function currentResultValue(entry) {
+    return entry.el ? entry.el.value : entry.staticText;
+  }
+
+  function recombineResultText() {
+    return resultTextareas.map(currentResultValue).join(EOL);
+  }
+
+  function computeGlobalOffset(activeTextarea) {
+    let offset = 0;
+    for (const entry of resultTextareas) {
+      if (entry.el === activeTextarea) {
+        return offset + activeTextarea.selectionStart;
+      }
+      offset += currentResultValue(entry).length + EOL.length;
+    }
+    return offset;
+  }
+
+  function restoreCursorIfPending() {
+    if (pendingCursor === null) return;
+    const target = pendingCursor;
+    pendingCursor = null;
+    let offset = 0;
+    for (const entry of resultTextareas) {
+      const len = currentResultValue(entry).length;
+      if (entry.el && target <= offset + len) {
+        entry.el.focus();
+        const pos = Math.max(0, Math.min(len, target - offset));
+        entry.el.setSelectionRange(pos, pos);
+        return;
+      }
+      offset += len + EOL.length;
+    }
+  }
+
+  function onResultInput(ta) {
+    autoGrow(ta);
+    dirty = true;
+    pendingCursor = computeGlobalOffset(ta);
+    clearTimeout(editDebounce);
+    editDebounce = setTimeout(() => {
+      resultText = recombineResultText();
+      recomputeAndSend();
+    }, 250);
+  }
+
+  function recomputeAndSend() {
+    clearTimeout(editDebounce);
+    layout = window.MergeStudioLayout.buildLayout(localText, resultText, serverText);
+    if (focusedGroupIndex >= layout.groups.length) {
+      focusedGroupIndex = -1;
+    }
+    render();
+    post({ type: 'directEdit', text: resultText, remainingConflicts: layout.conflictCount });
+  }
+
+  function takeSide(groupIndex, side) {
+    const group = layout.groups[groupIndex];
+    const entry = resultTextareas[groupIndex];
+    if (!group || !entry) return;
+    const lines = side === 'local' ? group.local.lines : group.server.lines;
+    const text = lines.join(EOL);
+    if (entry.el) {
+      entry.el.value = text;
+    } else {
+      entry.staticText = text;
+    }
+    dirty = true;
+    resultText = recombineResultText();
+    recomputeAndSend();
+  }
+
+  function acceptAll(side) {
+    layout.groups.forEach((g, i) => {
+      if (g.kind === 'equal') return;
+      const entry = resultTextareas[i];
+      if (!entry) return;
+      const lines = side === 'local' ? g.local.lines : g.server.lines;
+      const text = lines.join(EOL);
+      if (entry.el) {
+        entry.el.value = text;
+      } else {
+        entry.staticText = text;
+      }
+    });
+    dirty = true;
+    resultText = recombineResultText();
+    recomputeAndSend();
+  }
+
+  function go(delta) {
+    const changeIndices = getChangeIndices();
+    if (changeIndices.length === 0) return;
+    const pos = changeIndices.indexOf(focusedGroupIndex);
+    const nextPos = pos === -1
+      ? (delta > 0 ? 0 : changeIndices.length - 1)
+      : ((pos + delta) % changeIndices.length + changeIndices.length) % changeIndices.length;
+    focusedGroupIndex = changeIndices[nextPos];
+    render();
+    const target = document.querySelector(`[data-group-index="${focusedGroupIndex}"]`);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+
+  // ---------- host <-> webview messages ----------
+
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (msg.type === 'init') {
-      state = { blocks: msg.blocks, total: msg.total, fileName: msg.fileName };
-      manualEditIndex = null;
-      currentNavIndex = -1;
-      resolvedTextByIndex.clear();
-      render();
-    } else if (msg.type === 'update') {
-      resolvedIndexes = new Set(msg.resolvedIndexes);
+      fileName = msg.fileName;
+      localText = msg.localText;
+      serverText = msg.serverText;
       resultText = msg.resultText;
-      state.total = msg.total;
-      for (const index of Array.from(resolvedTextByIndex.keys())) {
-        if (!resolvedIndexes.has(index)) {
-          resolvedTextByIndex.delete(index);
-        }
-      }
-      const activeElement = document.activeElement;
-      const resultFocused = activeElement && activeElement.id === 'result-textarea';
+      EOL = (localText.includes('\r\n') || serverText.includes('\r\n') || resultText.includes('\r\n')) ? '\r\n' : '\n';
+      focusedGroupIndex = -1;
+      expandedGroups.clear();
+      dirty = false;
+      layout = window.MergeStudioLayout.buildLayout(localText, resultText, serverText);
       render();
-      if (resultFocused) {
-        focusResultTextareaIfOpen();
-      }
     } else if (msg.type === 'navigate') {
       go(msg.direction === 'next' ? 1 : -1);
     }

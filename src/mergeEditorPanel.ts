@@ -1,16 +1,21 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { parseDocument, buildResultText, hasConflictMarkers, ParsedDocument } from './conflictParser';
+import {
+  parseDocument,
+  hasConflictMarkers,
+  buildLocalText,
+  buildServerText,
+  buildAutoMergedResultText,
+  countUnresolvedConflicts,
+  ParsedDocument,
+} from './conflictParser';
 import { gitAdd, getRepoRoot } from './gitHelper';
 
-type ResolveChoice = 'local' | 'base' | 'incoming' | 'both' | 'none' | 'custom';
-
 interface InboundMessage {
-  type: 'ready' | 'resolve' | 'unresolve' | 'acceptAllLocal' | 'acceptAllIncoming' | 'directEdit' | 'save' | 'saveAndMarkResolved';
-  index?: number;
-  choice?: ResolveChoice;
+  type: 'ready' | 'reload' | 'directEdit' | 'save' | 'saveAndMarkResolved' | 'abort';
   text?: string;
+  remainingConflicts?: number;
 }
 
 export class MergeEditorPanel {
@@ -22,8 +27,8 @@ export class MergeEditorPanel {
   private readonly onSaved: () => void;
 
   private doc!: ParsedDocument;
-  private resolutions = new Map<number, string>();
-  private pendingDirectText: string | undefined;
+  private currentResultText = '';
+  private remainingConflicts = 0;
 
   static async createOrShow(context: vscode.ExtensionContext, fileUri: vscode.Uri, onSaved: () => void): Promise<MergeEditorPanel> {
     const key = fileUri.fsPath;
@@ -82,29 +87,18 @@ export class MergeEditorPanel {
   private async load(): Promise<void> {
     const content = await fs.readFile(this.fileUri.fsPath, 'utf8');
     this.doc = parseDocument(content);
-    this.resolutions.clear();
-    this.pendingDirectText = undefined;
+    this.currentResultText = buildAutoMergedResultText(this.doc);
+    this.remainingConflicts = countUnresolvedConflicts(this.doc);
     this.postInit();
-    this.postUpdate();
   }
 
   private postInit(): void {
     this.panel.webview.postMessage({
       type: 'init',
       fileName: path.basename(this.fileUri.fsPath),
-      blocks: this.doc.blocks,
-      total: this.doc.conflicts.length,
-    });
-  }
-
-  private postUpdate(): void {
-    const resultText = buildResultText(this.doc, this.resolutions);
-    this.panel.webview.postMessage({
-      type: 'update',
-      resultText,
-      resolvedIndexes: Array.from(this.resolutions.keys()),
-      resolvedCount: this.resolutions.size,
-      total: this.doc.conflicts.length,
+      localText: buildLocalText(this.doc),
+      serverText: buildServerText(this.doc),
+      resultText: this.currentResultText,
     });
   }
 
@@ -112,34 +106,13 @@ export class MergeEditorPanel {
     switch (msg.type) {
       case 'ready':
         this.postInit();
-        this.postUpdate();
         break;
-      case 'resolve':
-        this.resolveConflict(msg.index, msg.choice, msg.text);
-        break;
-      case 'unresolve':
-        if (typeof msg.index === 'number') {
-          this.pendingDirectText = undefined;
-          this.resolutions.delete(msg.index);
-          this.postUpdate();
-        }
-        break;
-      case 'acceptAllLocal':
-        this.pendingDirectText = undefined;
-        for (const c of this.doc.conflicts) {
-          this.resolutions.set(c.index, c.local);
-        }
-        this.postUpdate();
-        break;
-      case 'acceptAllIncoming':
-        this.pendingDirectText = undefined;
-        for (const c of this.doc.conflicts) {
-          this.resolutions.set(c.index, c.incoming);
-        }
-        this.postUpdate();
+      case 'reload':
+        await this.load();
         break;
       case 'directEdit':
-        this.pendingDirectText = msg.text ?? '';
+        this.currentResultText = msg.text ?? '';
+        this.remainingConflicts = msg.remainingConflicts ?? this.remainingConflicts;
         break;
       case 'save':
         await this.save(false);
@@ -147,50 +120,15 @@ export class MergeEditorPanel {
       case 'saveAndMarkResolved':
         await this.save(true);
         break;
+      case 'abort':
+        this.panel.dispose();
+        break;
     }
-  }
-
-  private resolveConflict(index: number | undefined, choice: ResolveChoice | undefined, customText: string | undefined): void {
-    if (typeof index !== 'number' || !choice) {
-      return;
-    }
-    const conflict = this.doc.conflicts.find((c) => c.index === index);
-    if (!conflict) {
-      return;
-    }
-
-    let text: string;
-    switch (choice) {
-      case 'local':
-        text = conflict.local;
-        break;
-      case 'base':
-        text = conflict.base ?? '';
-        break;
-      case 'incoming':
-        text = conflict.incoming;
-        break;
-      case 'both':
-        text = [conflict.local, conflict.incoming].filter((s) => s.length > 0).join(this.doc.eol);
-        break;
-      case 'none':
-        text = '';
-        break;
-      case 'custom':
-        text = customText ?? '';
-        break;
-      default:
-        return;
-    }
-
-    this.pendingDirectText = undefined;
-    this.resolutions.set(index, text);
-    this.postUpdate();
   }
 
   private async save(markResolved: boolean): Promise<void> {
-    const text = this.pendingDirectText !== undefined ? this.pendingDirectText : buildResultText(this.doc, this.resolutions);
-    const stillHasConflicts = hasConflictMarkers(text);
+    const text = this.currentResultText;
+    const stillHasConflicts = this.remainingConflicts > 0 || hasConflictMarkers(text);
 
     if (stillHasConflicts) {
       const choice = await vscode.window.showWarningMessage(
@@ -207,8 +145,8 @@ export class MergeEditorPanel {
 
     // Reload from what we just wrote so in-memory state matches disk.
     this.doc = parseDocument(text);
-    this.resolutions.clear();
-    this.pendingDirectText = undefined;
+    this.currentResultText = buildAutoMergedResultText(this.doc);
+    this.remainingConflicts = countUnresolvedConflicts(this.doc);
 
     if (!stillHasConflicts && markResolved) {
       const root = await getRepoRoot(path.dirname(this.fileUri.fsPath));
@@ -223,7 +161,6 @@ export class MergeEditorPanel {
     }
 
     this.postInit();
-    this.postUpdate();
     this.onSaved();
   }
 
@@ -236,6 +173,8 @@ export class MergeEditorPanel {
 
   private getHtml(): string {
     const webview = this.panel.webview;
+    const diffUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'diff.js'));
+    const layoutUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'mergeLayout.js'));
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js'));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.css'));
     const nonce = getNonce();
@@ -250,6 +189,8 @@ export class MergeEditorPanel {
 </head>
 <body>
 <div id="app"></div>
+<script nonce="${nonce}" src="${diffUri}"></script>
+<script nonce="${nonce}" src="${layoutUri}"></script>
 <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
