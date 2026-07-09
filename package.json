@@ -1,0 +1,141 @@
+{
+  "name": "merge-studio",
+  "displayName": "Merge Studio — 3-Way Merge & Conflict Resolver",
+  "description": "Visual 3-way merge editor and Git conflict resolver for VS Code.",
+  "version": "0.1.0",
+  "publisher": "local-dev",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "keywords": [
+    "git",
+    "merge",
+    "conflict",
+    "3-way merge",
+    "diff"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mergeStudio.refresh",
+        "title": "Merge Studio: Refresh Conflicts",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "mergeStudio.openMergeEditor",
+        "title": "Merge Studio: Open Merge Editor",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "mergeStudio.acceptAllCurrentFile",
+        "title": "Merge Studio: Accept All Current (This File)"
+      },
+      {
+        "command": "mergeStudio.acceptAllIncomingFile",
+        "title": "Merge Studio: Accept All Incoming (This File)"
+      },
+      {
+        "command": "mergeStudio.acceptAllCurrentWorkspace",
+        "title": "Merge Studio: Accept All Current (Entire Workspace)"
+      },
+      {
+        "command": "mergeStudio.acceptAllIncomingWorkspace",
+        "title": "Merge Studio: Accept All Incoming (Entire Workspace)"
+      },
+      {
+        "command": "mergeStudio.markResolved",
+        "title": "Merge Studio: Mark as Resolved (git add)",
+        "icon": "$(check)"
+      },
+      {
+        "command": "mergeStudio.nextConflict",
+        "title": "Merge Studio: Next Conflict"
+      },
+      {
+        "command": "mergeStudio.previousConflict",
+        "title": "Merge Studio: Previous Conflict"
+      },
+      {
+        "command": "mergeStudio.showPanel",
+        "title": "Merge Studio: Show Conflicted Files"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mergeStudio",
+          "title": "Merge Studio",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mergeStudio": [
+        {
+          "id": "mergeStudio.conflictedFiles",
+          "name": "Conflicted Files"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "mergeStudio.openMergeEditor",
+          "when": "view == mergeStudio.conflictedFiles && viewItem == conflictFile",
+          "group": "inline@1"
+        },
+        {
+          "command": "mergeStudio.markResolved",
+          "when": "view == mergeStudio.conflictedFiles && viewItem == conflictFile",
+          "group": "inline@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "mergeStudio.refresh",
+          "when": "view == mergeStudio.conflictedFiles",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "mergeStudio.openMergeEditor",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "mergeStudio.nextConflict",
+        "key": "alt+f8",
+        "when": "activeWebviewPanelId == 'mergeStudio.editor'"
+      },
+      {
+        "command": "mergeStudio.previousConflict",
+        "key": "shift+alt+f8",
+        "when": "activeWebviewPanelId == 'mergeStudio.editor'"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.5",
+    "@vscode/vsce": "^2.24.0"
+  }
+}
