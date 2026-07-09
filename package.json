@@ -1,13 +1,23 @@
 {
   "name": "merge-studio",
   "displayName": "Merge Studio — 3-Way Merge & Conflict Resolver",
-  "description": "Visual 3-way merge editor and Git conflict resolver for VS Code.",
-  "version": "0.1.0",
+  "description": "A beautiful 3-way merge conflict editor for VS Code & Cursor: resolve conflicts with color ribbons and one-click accept arrows, a conflicts dashboard, undo history, and a precise side-by-side diff — with optional one-click hand-off to an installed JetBrains IDE.",
+  "version": "0.2.0",
   "publisher": "local-dev",
   "private": true,
+  "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/dev-khanhvd/merge-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dev-khanhvd/merge-studio/issues"
+  },
+  "homepage": "https://github.com/dev-khanhvd/merge-studio#readme",
+  "galleryBanner": {
+    "color": "#1E222A",
+    "theme": "dark"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -17,160 +27,334 @@
     "Other"
   ],
   "keywords": [
-    "git",
+    "merge conflict",
+    "merge conflict resolver",
+    "conflict resolver",
+    "resolve conflicts",
     "merge",
-    "conflict",
+    "merge editor",
     "3-way merge",
-    "diff"
+    "three-way merge",
+    "merge tool",
+    "mergetool",
+    "diff",
+    "diff tool",
+    "git",
+    "git merge",
+    "rebase",
+    "cherry-pick",
+    "vscode",
+    "cursor",
+    "windsurf",
+    "jetbrains",
+    "intellij",
+    "pycharm",
+    "webstorm"
   ],
+  "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./out/extension.js",
+  "extensionDependencies": [
+    "vscode.git"
+  ],
   "contributes": {
-    "commands": [
+    "configuration": {
+      "title": "Merge Studio",
+      "properties": {
+        "jbMerge.conflictResolver": {
+          "type": "string",
+          "enum": [
+            "jetbrains",
+            "webview"
+          ],
+          "enumDescriptions": [
+            "Launch the real installed JetBrains IDE merge window (exact 1:1).",
+            "Use the built-in embedded merge editor (no external IDE needed)."
+          ],
+          "default": "webview",
+          "description": "Which resolver to use for conflicts. 'webview' uses the embedded editor; 'jetbrains' opens the real installed IDE."
+        },
+        "jbMerge.diffTool": {
+          "type": "string",
+          "enum": [
+            "embedded",
+            "jetbrains"
+          ],
+          "enumDescriptions": [
+            "Use the built-in embedded diff editor (no external IDE needed).",
+            "Open the diff in the real installed JetBrains IDE."
+          ],
+          "default": "embedded",
+          "description": "Which tool the 'Merge Studio: Compare' command uses. 'jetbrains' opens the real IDE, falling back to the embedded diff if none is installed."
+        },
+        "jbMerge.preferredIde": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "webstorm",
+            "pycharm",
+            "intellij",
+            "phpstorm",
+            "goland",
+            "clion",
+            "rider",
+            "rubymine",
+            "datagrip"
+          ],
+          "default": "auto",
+          "description": "Which installed JetBrains IDE to launch. 'auto' picks the first one found."
+        },
+        "jbMerge.jetbrainsPath": {
+          "type": "string",
+          "default": "",
+          "description": "Explicit path to a JetBrains IDE launcher (overrides auto-detection). e.g. /Users/you/Applications/WebStorm.app/Contents/MacOS/webstorm"
+        },
+        "jbMerge.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open conflicted files with the selected resolver (supersedes the built-in merge editor)."
+        }
+      }
+    },
+    "walkthroughs": [
       {
-        "command": "mergeStudio.refresh",
-        "title": "Merge Studio: Refresh Conflicts",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "mergeStudio.openMergeEditor",
-        "title": "Merge Studio: Open Merge Editor",
-        "icon": "$(git-merge)"
-      },
-      {
-        "command": "mergeStudio.acceptAllCurrentFile",
-        "title": "Merge Studio: Accept All Current (This File)"
-      },
-      {
-        "command": "mergeStudio.acceptAllIncomingFile",
-        "title": "Merge Studio: Accept All Incoming (This File)"
-      },
-      {
-        "command": "mergeStudio.acceptAllCurrentWorkspace",
-        "title": "Merge Studio: Accept All Current (Entire Workspace)"
-      },
-      {
-        "command": "mergeStudio.acceptAllIncomingWorkspace",
-        "title": "Merge Studio: Accept All Incoming (Entire Workspace)"
-      },
-      {
-        "command": "mergeStudio.markResolved",
-        "title": "Merge Studio: Mark as Resolved (git add)",
-        "icon": "$(check)"
-      },
-      {
-        "command": "mergeStudio.nextConflict",
-        "title": "Merge Studio: Next Conflict"
-      },
-      {
-        "command": "mergeStudio.previousConflict",
-        "title": "Merge Studio: Previous Conflict"
-      },
-      {
-        "command": "mergeStudio.showPanel",
-        "title": "Merge Studio: Show Conflicted Files"
-      },
-      {
-        "command": "mergeStudio.compareWithRef",
-        "title": "Merge Studio: Compare Working Tree with Commit/Branch…",
-        "icon": "$(git-compare)"
-      },
-      {
-        "command": "mergeStudio.clearCompare",
-        "title": "Merge Studio: Exit Compare Mode",
-        "icon": "$(close)"
+        "id": "mergeStudio.gettingStarted",
+        "title": "Get Started with Merge Studio",
+        "description": "Resolve merge conflicts and compare files in a beautiful three-pane editor, built into VS Code.",
+        "steps": [
+          {
+            "id": "mergeStudio.welcome",
+            "title": "Meet Merge Studio",
+            "description": "**A beautiful three-pane merge editor, built into VS Code.** Left is yours, center is the result you commit, right is theirs — wired with color ribbons and accept arrows. Includes a precise side-by-side diff. No external app required.",
+            "media": {
+              "image": "media/banner.png",
+              "altText": "Merge Studio — the embedded three-pane merge editor with connecting color ribbons."
+            },
+            "completionEvents": [
+              "onStepSelected"
+            ]
+          },
+          {
+            "id": "mergeStudio.tryMerge",
+            "title": "Try the three-pane merge",
+            "description": "**Open a ready-made sample conflict and resolve it — no setup.** Click the accept arrows in the gutter ribbons to pull a side into the center result. Edit the result freely; alignment re-flows live as you type.\n\n[Open sample merge](command:jbMerge.openDemo)",
+            "media": {
+              "image": "media/screenshots/merge-editor.png",
+              "altText": "Three-pane merge editor — yours, result, theirs — joined by accept arrows and color ribbons."
+            },
+            "completionEvents": [
+              "onCommand:jbMerge.openDemo"
+            ]
+          },
+          {
+            "id": "mergeStudio.tryDiff",
+            "title": "Try the side-by-side diff",
+            "description": "**Open a sample change in the side-by-side diff.** Panes align line for line, with intra-line highlights on exactly what moved.\n\n[Open sample diff](command:jbMerge.openDemoDiff)",
+            "media": {
+              "image": "media/screenshots/diff-view.png",
+              "altText": "Side-by-side diff with line-aligned panes and intra-line change highlights."
+            },
+            "completionEvents": [
+              "onCommand:jbMerge.openDemoDiff"
+            ]
+          },
+          {
+            "id": "mergeStudio.realConflicts",
+            "title": "Resolve your own conflicts",
+            "description": "**Point Merge Studio at your repo.** Conflicted files open in the three-pane editor automatically after a merge or rebase, and the conflicts list shows every affected file so you can work through them one by one.\n\n[Show my conflicts](command:jbMerge.showConflicts)",
+            "media": {
+              "image": "media/screenshots/conflicts-dialog.png",
+              "altText": "Conflicts list showing every conflicted file left by a merge or rebase."
+            },
+            "completionEvents": [
+              "onCommand:jbMerge.showConflicts"
+            ]
+          },
+          {
+            "id": "mergeStudio.handoff",
+            "title": "Optional: open in a JetBrains IDE",
+            "description": "Prefer a JetBrains IDE? Set `jbMerge.conflictResolver` to `jetbrains` and Merge Studio opens conflicts directly in your installed IntelliJ, WebStorm, PyCharm, or other JetBrains IDE.",
+            "media": {
+              "image": "media/screenshots/merge-editor.png",
+              "altText": "The three-pane merge editor — Merge Studio can hand any merge off to an installed JetBrains IDE."
+            },
+            "completionEvents": [
+              "onStepSelected"
+            ]
+          }
+        ]
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "mergeStudio",
-          "title": "Merge Studio",
-          "icon": "media/activity-icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "mergeStudio": [
-        {
-          "id": "mergeStudio.conflictedFiles",
-          "name": "Conflicted Files"
-        }
-      ]
-    },
+    "customEditors": [
+      {
+        "viewType": "jbMerge.mergeEditor",
+        "displayName": "Merge Studio Merge Editor",
+        "selector": [
+          {
+            "filenamePattern": "*"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "jbMerge.mergeWithJetBrains",
+        "title": "Merge with JetBrains IDE",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.diffWithJetBrains",
+        "title": "Diff with JetBrains IDE",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.resolveInMergeEditor",
+        "title": "Resolve in Embedded Merge Editor",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.showConflicts",
+        "title": "Resolve Conflicts…",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.compare",
+        "title": "Merge Studio: Compare"
+      },
+      {
+        "command": "jbMerge.openDiff",
+        "title": "Open in Embedded Diff",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.openChanges",
+        "title": "Open Changes (Embedded Diff)",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.openWalkthrough",
+        "title": "Open Getting Started",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.openDemo",
+        "title": "Open Sample Merge",
+        "category": "Merge Studio"
+      },
+      {
+        "command": "jbMerge.openDemoDiff",
+        "title": "Open Sample Diff",
+        "category": "Merge Studio"
+      }
+    ],
     "menus": {
-      "view/item/context": [
+      "scm/resourceGroup/context": [
         {
-          "command": "mergeStudio.openMergeEditor",
-          "when": "view == mergeStudio.conflictedFiles && viewItem == conflictFile",
-          "group": "inline@1"
-        },
-        {
-          "command": "mergeStudio.markResolved",
-          "when": "view == mergeStudio.conflictedFiles && viewItem == conflictFile",
-          "group": "inline@2"
-        },
-        {
-          "command": "mergeStudio.openMergeEditor",
-          "when": "view == mergeStudio.conflictedFiles && viewItem == compareFile",
-          "group": "inline@1"
+          "command": "jbMerge.showConflicts",
+          "when": "scmProvider == git && scmResourceGroup == merge",
+          "group": "1_modification@1"
         }
       ],
-      "view/title": [
+      "scm/resourceState/context": [
         {
-          "command": "mergeStudio.compareWithRef",
-          "when": "view == mergeStudio.conflictedFiles",
-          "group": "navigation@1"
+          "command": "jbMerge.resolveInMergeEditor",
+          "when": "scmProvider == git && scmResourceGroup == merge",
+          "group": "1_modification@1"
         },
         {
-          "command": "mergeStudio.clearCompare",
-          "when": "view == mergeStudio.conflictedFiles && mergeStudio.compareActive",
-          "group": "navigation@2"
+          "command": "jbMerge.mergeWithJetBrains",
+          "when": "scmProvider == git && scmResourceGroup == merge && jbMerge.ideAvailable",
+          "group": "1_modification@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "jbMerge.resolveInMergeEditor",
+          "when": "config.git.enabled && !git.missing && resource in git.mergeChanges && git.activeResourceHasMergeConflicts",
+          "group": "navigation"
         },
         {
-          "command": "mergeStudio.refresh",
-          "when": "view == mergeStudio.conflictedFiles",
-          "group": "navigation@3"
+          "command": "jbMerge.mergeWithJetBrains",
+          "when": "config.git.enabled && !git.missing && resource in git.mergeChanges && git.activeResourceHasMergeConflicts && jbMerge.ideAvailable",
+          "group": "navigation"
+        },
+        {
+          "command": "jbMerge.openChanges",
+          "when": "config.git.enabled && !git.missing && resourceScheme == file && gitOpenRepositoryCount != 0",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "jbMerge.compare",
+          "when": "!explorerResourceIsFolder",
+          "group": "3_compare@1"
         }
       ],
       "commandPalette": [
         {
-          "command": "mergeStudio.openMergeEditor",
+          "command": "jbMerge.openWalkthrough"
+        },
+        {
+          "command": "jbMerge.openDemo"
+        },
+        {
+          "command": "jbMerge.openDemoDiff"
+        },
+        {
+          "command": "jbMerge.compare"
+        },
+        {
+          "command": "jbMerge.diffWithJetBrains"
+        },
+        {
+          "command": "jbMerge.openDiff"
+        },
+        {
+          "command": "jbMerge.resolveInMergeEditor",
           "when": "false"
         }
       ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "mergeStudio.conflictedFiles",
-        "contents": "Không có file conflict nào trong một cuộc merge thật.\n\nBạn vẫn có thể so sánh & merge 3-way giữa working tree hiện tại và một commit/branch bất kỳ.\n[So sánh với Commit/Branch…](command:mergeStudio.compareWithRef)"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "mergeStudio.nextConflict",
-        "key": "alt+f8",
-        "when": "activeWebviewPanelId == 'mergeStudio.editor'"
-      },
-      {
-        "command": "mergeStudio.previousConflict",
-        "key": "shift+alt+f8",
-        "when": "activeWebviewPanelId == 'mergeStudio.editor'"
-      }
-    ]
+    }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "check-types": "tsc --noEmit && tsc -p test/tsconfig.json",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "vscode:prepublish": "npm run package"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
-    "@types/node": "^20.11.0",
-    "typescript": "^5.4.5",
-    "@vscode/vsce": "^2.24.0"
+    "@types/node": "^20.19.42",
+    "@types/vscode": "1.74.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.28.1",
+    "monaco-editor": "^0.55.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vscode-diff": "^3.0.1"
+  },
+  "overrides": {
+    "dompurify": "3.4.11"
+  },
+  "pricing": "Free",
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Merge Studio requires a local git repository on disk."
+    },
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "restrictedConfigurations": [
+        "jbMerge.jetbrainsPath"
+      ],
+      "description": "In Restricted Mode the workspace cannot override the JetBrains IDE launcher path (jbMerge.jetbrainsPath); everything else works."
+    }
   }
 }
