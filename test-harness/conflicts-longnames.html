@@ -458,8 +458,6 @@
       <span class="spacer"></span>
       <div class="support-actions">
         <button id="reportBug" title="Open an issue on GitHub">🐛 Report a bug</button>
-        <button id="sponsor" title="Sponsor on GitHub">❤️ Sponsor</button>
-        <button id="coffee" title="Buy me a coffee (Revolut)">☕ Buy me a coffee</button>
       </div>
       <span class="spacer"></span>
       <span class="counter" id="counter"></span>
@@ -482,9 +480,7 @@
     el("close").addEventListener("click", () => vscode.postMessage({ type: "close" }));
 
     const openExternal = (url) => vscode.postMessage({ type: "openExternal", url });
-    el("reportBug").addEventListener("click", () => openExternal("https://github.com/GitStudioHQ/merge-studio/issues"));
-    el("sponsor").addEventListener("click", () => openExternal("https://github.com/sponsors/antonarnaudov"));
-    el("coffee").addEventListener("click", () => openExternal("https://checkout.revolut.com/pay/7a6070ab-99ba-4170-a125-c5911b1a5c1d"));
+    el("reportBug").addEventListener("click", () => openExternal("https://github.com/dev-khanhvd/merge-studio/issues"));
 
     window.addEventListener("message", (event) => {
       const state = event.data;

@@ -18,7 +18,7 @@ discussions, or pull requests.**
 
 Instead, use GitHub's private vulnerability reporting:
 
-1. Open the [Security tab](https://github.com/GitStudioHQ/merge-studio/security)
+1. Open the [Security tab](https://github.com/dev-khanhvd/merge-studio/security)
    of this repository.
 2. Click **Report a vulnerability**.
 3. Fill in the advisory form.

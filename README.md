@@ -1,6 +1,6 @@
 # Merge Studio — 3-Way Merge & Conflict Resolver
 
-Trình merge 3 chiều và conflict resolver Git cho VS Code, clone lại toàn bộ tính năng/giao diện từ [GitStudioHQ/merge-studio](https://github.com/GitStudioHQ/merge-studio).
+Trình merge 3 chiều và conflict resolver Git cho VS Code.
 
 VS Code chưa từng có một merge editor thật sự. Merge Studio là merge editor đó: ba cột **của bạn (yours)** bên trái, **kết quả (result)** sẽ commit ở giữa, **của họ (theirs)** bên phải. Nhận một bên chỉ với một click, hoặc tự sửa kết quả — không cần rời khỏi editor.
 
