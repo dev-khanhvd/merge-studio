@@ -161,49 +161,6 @@ export function renderConflictsHtml(): string {
     }
     .done h2 { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
     .done .note { color: var(--vscode-descriptionForeground); font-size: 12px; }
-    .support-actions { display: flex; align-items: center; gap: 8px; }
-    /* Tertiary "support" variant: subtle glass at rest, a gentle lift + a
-     * one-off shine on hover only (never ambient — no attention-grabbing). */
-    .support-actions button {
-      position: relative;
-      overflow: hidden;
-      isolation: isolate;
-      font-size: 11px;
-      font-weight: 600;
-      padding: 3px 11px;
-      border: none;
-      border-radius: var(--r-control);
-      color: var(--vscode-foreground);
-      background: linear-gradient(180deg, rgba(124, 108, 240, 0.15), rgba(107, 91, 230, 0.07));
-      box-shadow:
-        0 0 0 1px rgba(124, 108, 240, 0.22) inset,
-        0 1px 8px rgba(107, 91, 230, 0.12);
-    }
-    .support-actions button:hover:not(:disabled) {
-      transform: translateY(-1px);
-      color: #fff;
-      background: linear-gradient(180deg, rgba(142, 130, 242, 0.42), rgba(107, 91, 230, 0.24));
-      box-shadow:
-        0 1px 0 rgba(255, 255, 255, 0.18) inset,
-        0 0 0 1px rgba(142, 130, 242, 0.50) inset,
-        0 4px 16px rgba(107, 91, 230, 0.40);
-    }
-    .support-actions button::after {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: -130%;
-      width: 55%;
-      height: 100%;
-      background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.40), transparent);
-      transform: skewX(-20deg);
-      z-index: -1;
-    }
-    .support-actions button:hover:not(:disabled)::after { animation: shine 0.8s ease; }
-    @keyframes shine { from { left: -130%; } to { left: 140%; } }
-    @media (prefers-reduced-motion: reduce) {
-      .support-actions button:hover::after { animation: none; }
-    }
     /* Success animation: the ring sweeps in like a loader, then the check draws. */
     .done-ring circle {
       fill: none;
@@ -465,10 +422,6 @@ export function renderConflictsHtml(): string {
     <footer>
       <button class="danger" id="abort"></button>
       <span class="spacer"></span>
-      <div class="support-actions">
-        <button id="reportBug" title="Open an issue on GitHub">🐛 Report a bug</button>
-      </div>
-      <span class="spacer"></span>
       <span class="counter" id="counter"></span>
       <button class="primary" id="close" hidden>Close</button>
     </footer>
@@ -481,9 +434,6 @@ export function renderConflictsHtml(): string {
 
     el("abort").addEventListener("click", () => vscode.postMessage({ type: "abort" }));
     el("close").addEventListener("click", () => vscode.postMessage({ type: "close" }));
-
-    const openExternal = (url) => vscode.postMessage({ type: "openExternal", url });
-    el("reportBug").addEventListener("click", () => openExternal("https://github.com/dev-khanhvd/merge-studio/issues"));
 
     window.addEventListener("message", (event) => {
       const state = event.data;
